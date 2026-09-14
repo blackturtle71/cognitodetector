@@ -9,7 +9,7 @@ import pandas as pd
 from torch import device as TorchDevice, float32, no_grad, softmax, tensor
 
 from cognitive_impairments.artifacts import ScalerState, load_neural_fold
-from cognitive_impairments.config import load_experiment_config
+from cognitive_impairments.config import ModelConfig, load_experiment_config
 from cognitive_impairments.data import read_feature_table
 from cognitive_impairments.features import TextEmbedder
 from cognitive_impairments.features import create_acoustic_extractor
@@ -35,11 +35,22 @@ def _validate_compatibility(
     manifest: dict[str, typing.Any],
     metadata: dict[str, typing.Any],
 ) -> None:
-    fields = ('embedder', 'pooling', 'max_length', 'embedding_dimension')
+    fields = (
+        'embedder',
+        'embedder_revision',
+        'pooling',
+        'embedding_normalized',
+        'max_length',
+        'acoustic_aggregation',
+        'embedding_dimension',
+    )
     metadata_values = {
         'embedder': metadata['embedder'],
+        'embedder_revision': metadata.get('embedder_revision'),
         'pooling': metadata['pooling'],
+        'embedding_normalized': metadata.get('embedding_normalized', False),
         'max_length': metadata['max_length'],
+        'acoustic_aggregation': metadata.get('acoustic_aggregation', 'utterance_mean'),
         'embedding_dimension': metadata['text_dimension'],
     }
     mismatched = [field for field in fields if manifest[field] != metadata_values[field]]
@@ -56,10 +67,23 @@ def load_fold_model(
 ) -> tuple[MultimodalNet, ScalerState, dict[str, typing.Any]]:
     state_dict, scaler, metadata = load_neural_fold(fold_directory)
     config = load_experiment_config(run_directory / 'config.toml')
+    model_config = config.model
+    if 'model_config' in metadata:
+        raw_model = metadata['model_config']
+        model_config = ModelConfig(
+            text_hidden=tuple(raw_model['text_hidden']),
+            text_dropout=tuple(raw_model['text_dropout']),
+            audio_hidden=tuple(raw_model['audio_hidden']),
+            audio_dropout=tuple(raw_model['audio_dropout']),
+            demographics_hidden=tuple(raw_model['demographics_hidden']),
+            demographics_dropout=raw_model['demographics_dropout'],
+            classifier_hidden=raw_model['classifier_hidden'],
+            classifier_dropout=raw_model['classifier_dropout'],
+        )
     model = MultimodalNet(
         text_dimension=metadata['text_dimension'],
         audio_dimension=metadata['audio_dimension'],
-        config=config.model,
+        config=model_config,
         modalities=Modalities(**metadata['modalities']),
     ).to(device)
     model.load_state_dict(state_dict)
@@ -166,7 +190,9 @@ def predict_recording(
     _state, _scaler, first_metadata = load_neural_fold(fold_directories[0])
     embedder = TextEmbedder(
         model_name=first_metadata['embedder'],
+        revision=first_metadata.get('embedder_revision'),
         pooling=first_metadata['pooling'],
+        normalize_embedding=first_metadata.get('embedding_normalized', False),
         max_length=first_metadata['max_length'],
         device=device,
     )

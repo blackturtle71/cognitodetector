@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import pathlib
 import typing
@@ -11,10 +12,11 @@ from opensmile import Smile
 from torch import device as TorchDevice
 
 from cognitive_impairments.chat import ChatRecord, parse_chat_file
-from cognitive_impairments.data import IDENTITY_COLUMNS, write_feature_table
+from cognitive_impairments.data import IDENTITY_COLUMNS, PREPROCESSING_COLUMNS, write_feature_table
 from cognitive_impairments.features import TextEmbedder
 from cognitive_impairments.features import create_acoustic_extractor
 from cognitive_impairments.features import extract_acoustic_features
+from cognitive_impairments.features import extract_concatenated_acoustic_features
 from cognitive_impairments.features import package_versions
 
 
@@ -70,17 +72,27 @@ def _build_row(
     label: int | None,
     embedder: TextEmbedder,
     extractor: Smile,
+    acoustic_aggregation: str,
 ) -> dict[str, typing.Any]:
     metadata = record.metadata
     if metadata.media_id is None or metadata.age is None or metadata.sex is None:
         raise ValueError('Validated CHAT record unexpectedly contains incomplete metadata')
 
     text = ' '.join(utterance.text for utterance in record.utterances)
-    acoustic_features = extract_acoustic_features(audio_path, record.utterances, extractor)
+    if acoustic_aggregation == 'concatenate':
+        acoustic_features = extract_concatenated_acoustic_features(
+            audio_path,
+            record.utterances,
+            extractor,
+        )
+    elif acoustic_aggregation == 'utterance_mean':
+        acoustic_features = extract_acoustic_features(audio_path, record.utterances, extractor)
+    else:
+        raise ValueError(f'Unsupported acoustic aggregation: {acoustic_aggregation}')
     if not np.isfinite(acoustic_features.to_numpy(dtype=np.float64)).all():
         raise ValueError('acoustic extraction produced non-finite values')
-    embedding = embedder.encode(text)
-    if not np.isfinite(embedding).all():
+    embedding = embedder.encode_with_metadata(text)
+    if not np.isfinite(embedding.values).all():
         raise ValueError('text embedding produced non-finite values')
     participant_id = metadata.media_id.split('-', maxsplit=1)[0]
     return {
@@ -93,7 +105,9 @@ def _build_row(
         'diagnosis': diagnosis,
         'label': label,
         'text': text,
-        'embedding': embedding,
+        'embedding': embedding.values,
+        'embedding_token_count': embedding.token_count,
+        'embedding_truncated': embedding.truncated,
         **acoustic_features.to_dict(),
     }
 
@@ -105,6 +119,7 @@ def _prepare_records(
     require_diagnosis: bool,
     use_record_diagnosis: bool,
     embedder: TextEmbedder,
+    acoustic_aggregation: str,
 ) -> tuple[pd.DataFrame, list[Exclusion]]:
     extractor = create_acoustic_extractor()
     rows: list[dict[str, typing.Any]] = []
@@ -136,6 +151,7 @@ def _prepare_records(
                 label=label,
                 embedder=embedder,
                 extractor=extractor,
+                acoustic_aggregation=acoustic_aggregation,
             )
         except (RuntimeError, ValueError) as error:
             exclusions.append(Exclusion(path=str(chat_path), reason=str(error)))
@@ -145,8 +161,10 @@ def _prepare_records(
     if not rows:
         raise ValueError('No usable records were produced')
     frame = pd.DataFrame(rows)
-    acoustic_columns = sorted(set(frame.columns) - set(IDENTITY_COLUMNS))
-    return frame[[*IDENTITY_COLUMNS, *acoustic_columns]], exclusions
+    acoustic_columns = sorted(
+        set(frame.columns) - set(IDENTITY_COLUMNS) - set(PREPROCESSING_COLUMNS),
+    )
+    return frame[[*IDENTITY_COLUMNS, *PREPROCESSING_COLUMNS, *acoustic_columns]], exclusions
 
 
 def _pitt_sources(
@@ -168,6 +186,7 @@ def prepare_pitt(
     output_path: pathlib.Path,
     embedder: TextEmbedder,
     task: str,
+    acoustic_aggregation: str = 'utterance_mean',
 ) -> None:
     sources = _pitt_sources(data_root, task)
     frame, exclusions = _prepare_records(
@@ -177,9 +196,18 @@ def prepare_pitt(
         require_diagnosis=True,
         use_record_diagnosis=True,
         embedder=embedder,
+        acoustic_aggregation=acoustic_aggregation,
     )
-    manifest = _build_manifest(frame, exclusions, embedder, corpus='pitt', split='all')
-    manifest['label_definition'] = 'Control=0; every non-Control diagnosis=1'
+    manifest = _build_manifest(
+        frame,
+        exclusions,
+        embedder,
+        corpus='pitt',
+        split='all',
+        acoustic_aggregation=acoustic_aggregation,
+        source_digest=_source_digest(sources, data_root),
+    )
+    manifest['label_definition'] = 'Control=0; every supported non-Control diagnosis=1'
     write_feature_table(frame, output_path, manifest)
     logger.info('Prepared %s Pitt records at %s', len(frame), output_path)
 
@@ -224,6 +252,7 @@ def prepare_adresso(
     output_path: pathlib.Path,
     embedder: TextEmbedder,
     split: str,
+    acoustic_aggregation: str = 'utterance_mean',
 ) -> None:
     if split == 'train':
         sources = _adresso_train_sources(data_root)
@@ -241,8 +270,17 @@ def prepare_adresso(
         require_diagnosis=require_diagnosis,
         use_record_diagnosis=split == 'train',
         embedder=embedder,
+        acoustic_aggregation=acoustic_aggregation,
     )
-    manifest = _build_manifest(frame, exclusions, embedder, corpus='adresso', split=split)
+    manifest = _build_manifest(
+        frame,
+        exclusions,
+        embedder,
+        corpus='adresso',
+        split=split,
+        acoustic_aggregation=acoustic_aggregation,
+        source_digest=_source_digest(sources, data_root),
+    )
     manifest['independent_pitt_validation'] = False
     write_feature_table(frame, output_path, manifest)
     logger.info('Prepared %s ADReSS %s records at %s', len(frame), split, output_path)
@@ -254,8 +292,12 @@ def _build_manifest(
     embedder: TextEmbedder,
     corpus: str,
     split: str,
+    acoustic_aggregation: str,
+    source_digest: str,
 ) -> dict[str, typing.Any]:
-    acoustic_features = sorted(set(frame.columns) - set(IDENTITY_COLUMNS))
+    acoustic_features = sorted(
+        set(frame.columns) - set(IDENTITY_COLUMNS) - set(PREPROCESSING_COLUMNS),
+    )
     embedding_dimension = len(np.asarray(frame['embedding'].iloc[0]).reshape(-1))
     return {
         'corpus': corpus,
@@ -263,13 +305,40 @@ def _build_manifest(
         'records': len(frame),
         'participants': int(frame['participant_id'].nunique()),
         'embedder': embedder.model_name,
+        'embedder_revision': embedder.revision,
         'pooling': embedder.pooling,
+        'embedding_normalized': embedder.normalize_embedding,
         'max_length': embedder.max_length,
+        'truncated_records': int(frame['embedding_truncated'].sum()),
+        'truncated_recording_ids': sorted(
+            frame.loc[frame['embedding_truncated'], 'recording_id'].astype(str),
+        ),
         'embedding_dimension': embedding_dimension,
+        'acoustic_aggregation': acoustic_aggregation,
         'acoustic_features': acoustic_features,
+        'source_sha256': source_digest,
         'exclusions': [dataclasses.asdict(exclusion) for exclusion in exclusions],
         'package_versions': package_versions(),
     }
+
+
+def _source_digest(
+    sources: list[tuple[pathlib.Path, pathlib.Path, str | None, int | None]],
+    data_root: pathlib.Path,
+) -> str:
+    digest = hashlib.sha256()
+    source_paths = sorted({path for source in sources for path in source[:2]})
+    for source_path in source_paths:
+        try:
+            relative_path = source_path.relative_to(data_root)
+        except ValueError:
+            relative_path = source_path
+        digest.update(str(relative_path).encode('utf-8'))
+        if source_path.exists():
+            digest.update(source_path.read_bytes())
+        else:
+            digest.update(b'MISSING')
+    return digest.hexdigest()
 
 
 def resolve_device(name: str) -> TorchDevice:

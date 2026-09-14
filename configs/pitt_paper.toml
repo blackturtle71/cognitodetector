@@ -1,0 +1,38 @@
+[features]
+embedder = 'BAAI/bge-base-en-v1.5'
+revision = 'a5beb1e3e68b9ab74eb54cfd186867f64f240e1aa'
+pooling = 'cls'
+normalize = true
+max_length = 512
+acoustic_aggregation = 'concatenate'
+
+[model]
+text_hidden = [256, 128, 64]
+text_dropout = [0.2, 0.5]
+audio_hidden = [64, 32]
+audio_dropout = [0.4, 0.2]
+demographics_hidden = [32, 32, 64]
+demographics_dropout = 0.05
+classifier_hidden = 128
+classifier_dropout = 0.5
+
+[training]
+outer_folds = 10
+max_epochs = 1000
+patience = 30
+batch_size = 32
+learning_rate = 0.001
+weight_decay = 0.01
+use_class_weights = true
+
+[selection]
+capacities = ['compact', 'current']
+optimizers = ['sgd', 'adamw']
+class_weights = [false, true]
+
+[paper]
+seeds = [7, 8, 9, 10, 11]
+confidence_level = 0.95
+bootstrap_replicates = 10000
+matching_seed = 7
+shap_seed = 7

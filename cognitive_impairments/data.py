@@ -21,6 +21,11 @@ IDENTITY_COLUMNS = (
     'embedding',
 )
 
+PREPROCESSING_COLUMNS = (
+    'embedding_token_count',
+    'embedding_truncated',
+)
+
 
 def manifest_path_for(dataset_path: pathlib.Path) -> pathlib.Path:
     return dataset_path.with_suffix('.manifest.json')

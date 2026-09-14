@@ -22,3 +22,5 @@ def test__calculate_binary_metrics__uses_probabilities_for_auc() -> None:
     assert result.false_positive == 0
     assert result.false_negative == 1
     assert result.true_positive == 1
+    assert result.sensitivity == 0.5
+    assert result.specificity == 1.0

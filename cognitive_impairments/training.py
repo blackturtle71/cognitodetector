@@ -106,8 +106,19 @@ def transform_arrays(
     )
 
 
-def build_optimizer(model: MultimodalNet, config: TrainingConfig) -> optim.Optimizer:
-    return optim.SGD(
+def build_optimizer(
+    model: MultimodalNet,
+    config: TrainingConfig,
+    optimizer_name: str = 'sgd',
+) -> optim.Optimizer:
+    optimizer_class: type[optim.Optimizer]
+    if optimizer_name == 'sgd':
+        optimizer_class = optim.SGD
+    elif optimizer_name == 'adamw':
+        optimizer_class = optim.AdamW
+    else:
+        raise ValueError(f'Unsupported optimizer: {optimizer_name}')
+    return optimizer_class(
         model.parameters(),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
@@ -587,8 +598,14 @@ def run_experiment_suite(
                     'audio_dimension': arrays.audio.shape[1],
                     'acoustic_features': manifest['acoustic_features'],
                     'embedder': manifest['embedder'],
+                    'embedder_revision': manifest.get('embedder_revision'),
                     'pooling': manifest['pooling'],
+                    'embedding_normalized': manifest.get('embedding_normalized', False),
                     'max_length': manifest['max_length'],
+                    'acoustic_aggregation': manifest.get(
+                        'acoustic_aggregation',
+                        'utterance_mean',
+                    ),
                     'probability_threshold': DEFAULT_PROBABILITY_THRESHOLD,
                 },
             )

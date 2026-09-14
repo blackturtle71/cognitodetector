@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shap
-from torch import Tensor, cat, device as TorchDevice, float32, nn, tensor
+from torch import Tensor, cat, device as TorchDevice, float32, nn, softmax, tensor
 
 from cognitive_impairments.data import read_feature_table
 from cognitive_impairments.prediction import FULL_MODEL_EXPERIMENT, load_fold_model
@@ -26,13 +26,16 @@ class ConcatenatedInputModel(nn.Module):
         audio = values[:, text_end:audio_end]
         age = values[:, audio_end:audio_end + 1]
         sex = values[:, audio_end + 1:audio_end + 2]
-        return self.model(embeddings, audio, age, sex)
+        logits = self.model(embeddings, audio, age, sex)
+        return softmax(logits, dim=1)[:, 1:2]
 
 
 def _select_positive_class(values: object) -> np.ndarray:
     if isinstance(values, list):
         return np.asarray(values[1])
     array = np.asarray(values)
+    if array.ndim == 3 and array.shape[2] == 1:
+        return array[:, :, 0]
     if array.ndim == 3:
         return array[:, :, 1]
     if array.ndim == 2:
@@ -176,10 +179,12 @@ def explain_cross_validation(
         all_shap[:, text_end:audio_end],
         all_values[:, text_end:audio_end],
         feature_names=manifest['acoustic_features'],
+        max_display=audio_dimension,
         show=False,
     )
     plt.tight_layout()
-    plt.savefig(output_directory / 'acoustic_summary.png')
+    plt.savefig(output_directory / 'acoustic_summary.png', dpi=300)
+    plt.savefig(output_directory / 'acoustic_summary.eps')
     plt.close()
 
     shap.summary_plot(

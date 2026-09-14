@@ -48,13 +48,17 @@ def copy_run_inputs(
 
 def _package_versions() -> dict[str, str]:
     packages = (
+        'audiofile',
         'matplotlib',
         'numpy',
+        'opensmile',
         'pandas',
         'pyarrow',
         'scikit-learn',
         'shap',
         'torch',
+        'transformers',
+        'xgboost',
     )
     return {package: importlib.metadata.version(package) for package in packages}
 

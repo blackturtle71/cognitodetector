@@ -14,8 +14,8 @@ model results are committed yet.
 
 - Pitt Cookie Theft parsing, participant-speech acoustic extraction, and transformer embeddings.
 - ADReSS train/test preprocessing and official test prediction export.
-- Participant-grouped nested evaluation with five neural modality combinations and a logistic
-  regression baseline.
+- A resumable, five-seed paper protocol with participant-grouped nested evaluation, five neural
+  modality combinations, three baselines, and an age/sex-matched sensitivity rerun.
 - Fold-safe scaling, class weights, early stopping, out-of-fold predictions, checkpoints, plots,
   and machine-readable metrics.
 - SHAP explanations calculated only for each fold's held-out recordings.
@@ -80,15 +80,17 @@ silently.
 
 ## Preprocessing
 
-The checked-in configuration preserves the architecture and numeric settings from the dissertation
-notebook. They are legacy defaults, not newly tuned values.
+`configs/pitt_multimodal.toml` preserves the architecture and numeric settings from the dissertation
+notebook for legacy smoke checks. The paper protocol instead uses `configs/pitt_paper.toml`, which
+pins the BGE model revision, official CLS/L2 embedding procedure, and concatenated participant-speech
+acoustic extraction.
 
 ```bash
 uv run python -m cognitive_impairments preprocess pitt \
   --data-root data/DementiaBank \
-  --config configs/pitt_multimodal.toml \
+  --config configs/pitt_paper.toml \
   --task cookie \
-  --output data/processed/pitt_cookie_bge.parquet
+  --output data/processed/pitt_cookie_bge_cls_l2_concat.parquet
 
 uv run python -m cognitive_impairments preprocess adresso \
   --data-root data/DementiaBank \
@@ -103,8 +105,9 @@ uv run python -m cognitive_impairments preprocess adresso \
   --output data/processed/adresso_test_bge.parquet
 ```
 
-Each Parquet file has an adjacent `.manifest.json`. The manifest fixes the embedding model,
-pooling, acoustic feature order, dimensions, dependency versions, sample counts, and exclusions.
+Each Parquet file has an adjacent `.manifest.json`. The manifest fixes the embedding model and
+revision, pooling and normalization, acoustic aggregation and feature order, source hash,
+dimensions, dependency versions, sample counts, truncations, and exclusions.
 Training and prediction reject incompatible manifests/checkpoints even when tensor dimensions
 happen to match.
 
@@ -122,6 +125,9 @@ uv run python -m cognitive_impairments stats \
 ```
 
 ## Dissertation experiment suite
+
+The `train` command below remains useful for quick legacy diagnostics. It is not the final paper
+protocol.
 
 Choose and record the seed explicitly; the repository does not invent one:
 
@@ -172,6 +178,69 @@ ROC AUC is calculated from positive-class probabilities. Accuracy, precision, re
 confusion matrix are calculated from complete held-out sample arrays, not averaged batch metrics.
 The standard binary probability threshold `0.5` is stored in checkpoint metadata. There is no
 "best fold" chosen from test performance.
+
+## Paper protocol
+
+After producing the paper feature table, launch or resume the complete analysis with one command:
+
+```bash
+uv run python -m cognitive_impairments paper-run \
+  --data data/processed/pitt_cookie_bge_cls_l2_concat.parquet \
+  --config configs/pitt_paper.toml \
+  --output outputs/pitt_paper \
+  --report-output paper_artifacts/pitt_paper \
+  --device auto
+```
+
+If a process stops after one or more complete cohort/seed units, repeat the same command with
+`--resume`. A unit is skipped only when its completion marker contains the same dataset, manifest,
+configuration, implementation, and lockfile hashes. Partial or incompatible directories are
+rejected rather than guessed at or overwritten.
+
+The command runs seeds 7–11 for the full cohort and for a deterministic exact age/sex-matched
+baseline cohort. Each outer fold selects among eight neural candidates using only one grouped inner
+validation partition, then evaluates five modality combinations. It also evaluates prevalence
+dummy, logistic-regression, and XGBoost baselines. See
+[the fixed analysis protocol](docs/paper_protocol.md) for the complete selection and statistical
+contract.
+
+Raw checkpoints, histories, split assignments, and row-level OOF predictions stay under ignored
+`outputs/`. Aggregate, publishable tables and figures are written to `paper_artifacts/pitt_paper/`:
+
+```text
+table_1_cohort.csv
+table_2_performance.csv
+table_3_paired_deltas.csv
+table_4_age_sensitivity.csv
+figure_1_pipeline.{eps,png}
+figure_2_oof_roc.{eps,png}
+figure_3_model_comparison.{eps,png}
+figure_4_acoustic_shap.{eps,png}
+figure_5_full_vs_matched.{eps,png}
+```
+
+Confidence intervals use 10,000 participant-clustered bootstrap samples. The primary metric is ROC
+AUC; secondary metrics use threshold 0.5. Metrics are pooled over all OOF predictions within a seed,
+and paired deltas use identical bootstrap samples without p-values. SHAP is produced only for the
+prespecified seed-7 full multimodal held-out predictions and explains positive-class probability.
+
+Do not launch the complete paper command as a smoke test: its two cohorts, five seeds, nested model
+selection, and SHAP stage are intentionally expensive. The readiness checklist is in
+[docs/paper_readiness_checklist.md](docs/paper_readiness_checklist.md).
+
+To verify the regenerated features, CUDA training, held-out predictions, and checkpoint writing in
+a few minutes, run the deliberately minimal three-fold, one-epoch diagnostic instead:
+
+```bash
+uv run python -m cognitive_impairments train \
+  --data data/processed/pitt_cookie_bge_cls_l2_concat.parquet \
+  --config configs/pitt_smoke.toml \
+  --seed 7 \
+  --device auto \
+  --output outputs/pitt_paper_features_smoke_seed_7
+```
+
+This smoke output is structural evidence only and must not be cited as a paper result.
 
 ## Explanations
 

@@ -16,6 +16,8 @@ class BinaryMetrics:
     accuracy: float
     precision: float
     recall: float
+    sensitivity: float
+    specificity: float
     f1: float
     roc_auc: float
     true_negative: int
@@ -32,10 +34,19 @@ def calculate_binary_metrics(
     predictions = (positive_probabilities >= threshold).astype(int)
     matrix = confusion_matrix(labels, predictions, labels=[0, 1])
     true_negative, false_positive, false_negative, true_positive = matrix.ravel()
+    sensitivity = float(recall_score(labels, predictions, zero_division=0))
+    specificity_denominator = true_negative + false_positive
+    specificity = (
+        float(true_negative / specificity_denominator)
+        if specificity_denominator
+        else float('nan')
+    )
     return BinaryMetrics(
         accuracy=float(accuracy_score(labels, predictions)),
         precision=float(precision_score(labels, predictions, zero_division=0)),
-        recall=float(recall_score(labels, predictions, zero_division=0)),
+        recall=sensitivity,
+        sensitivity=sensitivity,
+        specificity=specificity,
         f1=float(f1_score(labels, predictions, zero_division=0)),
         roc_auc=float(roc_auc_score(labels, positive_probabilities)),
         true_negative=int(true_negative),

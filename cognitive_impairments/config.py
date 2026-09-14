@@ -31,8 +31,27 @@ class TrainingConfig:
 @dataclasses.dataclass(frozen=True)
 class FeatureConfig:
     embedder: str
+    revision: str | None
     pooling: str
+    normalize: bool
     max_length: int
+    acoustic_aggregation: str
+
+
+@dataclasses.dataclass(frozen=True)
+class SelectionConfig:
+    capacities: tuple[str, ...]
+    optimizers: tuple[str, ...]
+    class_weights: tuple[bool, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class PaperConfig:
+    seeds: tuple[int, ...]
+    confidence_level: float
+    bootstrap_replicates: int
+    matching_seed: int
+    shap_seed: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -40,6 +59,8 @@ class ExperimentConfig:
     model: ModelConfig
     training: TrainingConfig
     features: FeatureConfig
+    selection: SelectionConfig | None = None
+    paper: PaperConfig | None = None
 
 
 def _as_int_tuple(values: list[int], field_name: str) -> tuple[int, ...]:
@@ -92,13 +113,80 @@ def load_experiment_config(path: pathlib.Path) -> ExperimentConfig:
         classifier_dropout=model_raw['classifier_dropout'],
     )
     training = TrainingConfig(**training_raw)
-    features = FeatureConfig(**features_raw)
+    features = FeatureConfig(
+        embedder=features_raw['embedder'],
+        revision=features_raw.get('revision'),
+        pooling=features_raw['pooling'],
+        normalize=features_raw.get('normalize', False),
+        max_length=features_raw['max_length'],
+        acoustic_aggregation=features_raw.get('acoustic_aggregation', 'utterance_mean'),
+    )
 
     if training.outer_folds < 3:
         raise ValueError('training.outer_folds must be at least three')
     if training.max_epochs <= 0 or training.patience <= 0 or training.batch_size <= 0:
         raise ValueError('Epoch, patience, and batch-size values must be positive')
-    if features.pooling not in {'mean', 'max'}:
-        raise ValueError("features.pooling must be either 'mean' or 'max'")
+    if features.pooling not in {'cls', 'mean', 'max'}:
+        raise ValueError("features.pooling must be 'cls', 'mean', or 'max'")
+    if features.acoustic_aggregation not in {'concatenate', 'utterance_mean'}:
+        raise ValueError(
+            "features.acoustic_aggregation must be 'concatenate' or 'utterance_mean'",
+        )
 
-    return ExperimentConfig(model=model, training=training, features=features)
+    selection = None
+    if 'selection' in raw:
+        selection_raw = raw['selection']
+        selection = SelectionConfig(
+            capacities=tuple(selection_raw['capacities']),
+            optimizers=tuple(selection_raw['optimizers']),
+            class_weights=tuple(selection_raw['class_weights']),
+        )
+        if set(selection.capacities) - {'compact', 'current'}:
+            raise ValueError('selection.capacities contains an unsupported value')
+        if set(selection.optimizers) - {'sgd', 'adamw'}:
+            raise ValueError('selection.optimizers contains an unsupported value')
+        if not selection.capacities or len(set(selection.capacities)) != len(
+            selection.capacities,
+        ):
+            raise ValueError('selection.capacities must contain unique values')
+        if not selection.optimizers or len(set(selection.optimizers)) != len(
+            selection.optimizers,
+        ):
+            raise ValueError('selection.optimizers must contain unique values')
+        if not selection.class_weights or len(set(selection.class_weights)) != len(
+            selection.class_weights,
+        ):
+            raise ValueError('selection.class_weights must contain unique values')
+
+    paper = None
+    if 'paper' in raw:
+        paper_raw = raw['paper']
+        paper = PaperConfig(
+            seeds=tuple(paper_raw['seeds']),
+            confidence_level=paper_raw['confidence_level'],
+            bootstrap_replicates=paper_raw['bootstrap_replicates'],
+            matching_seed=paper_raw['matching_seed'],
+            shap_seed=paper_raw['shap_seed'],
+        )
+        if not paper.seeds or len(set(paper.seeds)) != len(paper.seeds):
+            raise ValueError('paper.seeds must contain unique values')
+        if not 0 < paper.confidence_level < 1:
+            raise ValueError('paper.confidence_level must be between zero and one')
+        if paper.bootstrap_replicates <= 0:
+            raise ValueError('paper.bootstrap_replicates must be positive')
+        if paper.shap_seed not in paper.seeds:
+            raise ValueError('paper.shap_seed must be included in paper.seeds')
+
+    return ExperimentConfig(
+        model=model,
+        training=training,
+        features=features,
+        selection=selection,
+        paper=paper,
+    )
+
+
+def require_paper_protocol(config: ExperimentConfig) -> tuple[SelectionConfig, PaperConfig]:
+    if config.selection is None or config.paper is None:
+        raise ValueError('Paper runs require [selection] and [paper] configuration sections')
+    return config.selection, config.paper

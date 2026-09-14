@@ -35,6 +35,17 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument('--seed', type=int, required=True)
     _add_device_argument(train)
 
+    paper_run = commands.add_parser(
+        'paper-run',
+        help='Run or resume the prespecified paper evaluation protocol.',
+    )
+    paper_run.add_argument('--data', type=pathlib.Path, required=True)
+    paper_run.add_argument('--config', type=pathlib.Path, required=True)
+    paper_run.add_argument('--output', type=pathlib.Path, required=True)
+    paper_run.add_argument('--report-output', type=pathlib.Path, required=True)
+    paper_run.add_argument('--resume', action='store_true')
+    _add_device_argument(paper_run)
+
     statistics = commands.add_parser('stats', help='Save dataset statistics as JSON.')
     statistics.add_argument('--data', type=pathlib.Path, required=True)
     statistics.add_argument('--output', type=pathlib.Path, required=True)
@@ -79,14 +90,28 @@ def _run_preprocess(arguments: argparse.Namespace) -> None:
     device = resolve_device(arguments.device)
     embedder = TextEmbedder(
         model_name=config.features.embedder,
+        revision=config.features.revision,
         pooling=config.features.pooling,
+        normalize_embedding=config.features.normalize,
         max_length=config.features.max_length,
         device=device,
     )
     if arguments.corpus == 'pitt':
-        prepare_pitt(arguments.data_root, arguments.output, embedder, arguments.task)
+        prepare_pitt(
+            arguments.data_root,
+            arguments.output,
+            embedder,
+            arguments.task,
+            config.features.acoustic_aggregation,
+        )
     else:
-        prepare_adresso(arguments.data_root, arguments.output, embedder, arguments.split)
+        prepare_adresso(
+            arguments.data_root,
+            arguments.output,
+            embedder,
+            arguments.split,
+            config.features.acoustic_aggregation,
+        )
 
 
 def run(arguments: argparse.Namespace) -> None:
@@ -102,6 +127,18 @@ def run(arguments: argparse.Namespace) -> None:
             arguments.output,
             arguments.seed,
             resolve_device(arguments.device),
+        )
+    elif arguments.command == 'paper-run':
+        from cognitive_impairments.paper import run_paper_protocol
+        from cognitive_impairments.preprocessing import resolve_device
+
+        run_paper_protocol(
+            dataset_path=arguments.data,
+            config_path=arguments.config,
+            output_directory=arguments.output,
+            report_directory=arguments.report_output,
+            device=resolve_device(arguments.device),
+            resume=arguments.resume,
         )
     elif arguments.command == 'stats':
         from cognitive_impairments.statistics import save_dataset_statistics
