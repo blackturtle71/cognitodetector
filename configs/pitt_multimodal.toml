@@ -1,0 +1,23 @@
+[features]
+embedder = 'BAAI/bge-base-en-v1.5'
+pooling = 'mean'
+max_length = 512
+
+[model]
+text_hidden = [256, 128, 64]
+text_dropout = [0.2, 0.5]
+audio_hidden = [64, 32]
+audio_dropout = [0.4, 0.2]
+demographics_hidden = [32, 32, 64]
+demographics_dropout = 0.05
+classifier_hidden = 128
+classifier_dropout = 0.5
+
+[training]
+outer_folds = 10
+max_epochs = 1000
+patience = 30
+batch_size = 32
+learning_rate = 0.001
+weight_decay = 0.01
+use_class_weights = true
