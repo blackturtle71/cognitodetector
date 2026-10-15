@@ -1,0 +1,19 @@
+paper_artifacts/pitt_paper/figure_4_acoustic_shap_top20.eps
+  s_b63eba8476aa1a::t_1fff820c4b6e50 1-86585
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c853783601d67e989b617b24f5a86bfbea37c534",
+  "prompts": {},
+  "sessions": {
+    "s_b63eba8476aa1a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a09f48-69bd-7bd0-b6f0-feebd01be32e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "blackturtle71 <glebosadchiy71@gmail.com>"
+    }
+  }
+}
